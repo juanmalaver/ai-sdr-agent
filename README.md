@@ -76,3 +76,31 @@ The root route returns a compact endpoint overview:
 ```bash
 curl http://localhost:3000/
 ```
+
+## Scheduled Outreach
+
+Cloud Scheduler should own the 9 AM Miami trigger when the app runs on GCP.
+The app exposes `POST /outreach/run-daily` as the scheduled endpoint.
+
+Set `SCHEDULER_SECRET` in production to require the `X-Scheduler-Secret` header on that endpoint:
+
+```bash
+gcloud run services update ai-sdr-agent \
+  --region=us-east1 \
+  --update-env-vars="SCHEDULER_SECRET=replace-with-a-long-random-secret"
+```
+
+Create a Cloud Scheduler job for 9 AM Miami time:
+
+```bash
+gcloud scheduler jobs create http daily-outreach-9am-miami \
+  --location=us-east1 \
+  --schedule="0 9 * * *" \
+  --time-zone="America/New_York" \
+  --uri="https://YOUR_CLOUD_RUN_URL/outreach/run-daily" \
+  --http-method=POST \
+  --headers="Content-Type=application/json,X-Scheduler-Secret=replace-with-a-long-random-secret" \
+  --message-body="{}"
+```
+
+If `SCHEDULER_SECRET` is not set, the endpoint remains open for local development.
