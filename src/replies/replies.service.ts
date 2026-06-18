@@ -28,7 +28,7 @@ export class RepliesService {
     return this.aiService.classifyReply(text);
   }
 
-  triageReply(input: TriageReplyInput) {
+  async triageReply(input: TriageReplyInput) {
     const text = input.text?.trim();
 
     if (!text) {
@@ -37,7 +37,7 @@ export class RepliesService {
 
     const lead = this.findLead(input);
     const classification = this.aiService.classifyReply(text);
-    const actions = this.applyReplyIntent(lead, classification.intent);
+    const actions = await this.applyReplyIntent(lead, classification.intent);
     const updatedLead = this.leadsService.findLead(lead.id);
 
     return {
@@ -63,10 +63,10 @@ export class RepliesService {
     throw new NotFoundException('Lead was not found by leadId or fromEmail.');
   }
 
-  private applyReplyIntent(lead: Lead, intent: ReplyIntent): string[] {
+  private async applyReplyIntent(lead: Lead, intent: ReplyIntent): Promise<string[]> {
     if (intent === ReplyIntent.Interested) {
       this.leadsService.updateStatus(lead.id, LeadStatus.Interested);
-      this.emailProviderService.sendBookingLink(lead);
+      await this.emailProviderService.sendBookingLink(lead);
       return ['mark_interested', 'send_booking_link', 'slack_alert', 'monday_item'];
     }
 
