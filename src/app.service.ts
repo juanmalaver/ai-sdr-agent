@@ -7,7 +7,7 @@ export class AppService {
       service: 'ai-sdr-agent',
       message: 'Workflow engine with AI services for personalization and reply triage.',
       endpoints: {
-        leads: ['GET /leads', 'POST /leads/import'],
+        leads: ['GET /leads', 'POST /leads/import (JSON or CSV multipart upload)'],
         outreach: ['GET /outreach/due', 'POST /outreach/run-daily'],
         replies: ['POST /replies/classify', 'POST /replies/triage'],
       },
