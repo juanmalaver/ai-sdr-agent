@@ -36,27 +36,29 @@ export class OutreachService {
     return typeof limit === 'number' ? dueLeads.slice(0, limit) : dueLeads;
   }
 
-  runDailyOutreach(limit?: number) {
+  async runDailyOutreach(limit?: number) {
     const now = new Date();
-    const results: OutreachResult[] = this.listDueLeads(limit).map((lead) => {
-      const draft = this.aiService.personalizeEmail(lead);
-      const email = this.emailProviderService.sendEmail({
-        to: lead.email,
-        subject: draft.subject,
-        body: draft.body,
-      });
-      const updatedLead = this.leadsService.recordTouch(
-        lead.id,
-        now,
-        this.followUpDelayDays,
-        this.maxTouches,
-      );
+    const results: OutreachResult[] = await Promise.all(
+      this.listDueLeads(limit).map(async (lead) => {
+        const draft = this.aiService.personalizeEmail(lead);
+        const email = await this.emailProviderService.sendEmail({
+          to: lead.email,
+          subject: draft.subject,
+          body: draft.body,
+        });
+        const updatedLead = this.leadsService.recordTouch(
+          lead.id,
+          now,
+          this.followUpDelayDays,
+          this.maxTouches,
+        );
 
-      return {
-        lead: updatedLead,
-        email,
-      };
-    });
+        return {
+          lead: updatedLead,
+          email,
+        };
+      }),
+    );
 
     return {
       sentCount: results.length,

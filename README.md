@@ -7,16 +7,18 @@ email personalization and reply understanding.
 
 ```bash
 npm install
+cp .env.example .env
 npm run start:dev
 ```
 
 The API starts on `http://localhost:3000` by default.
+The app loads local values from `.env`; set production values in the deployment environment.
 
 ## Current Flow
 
 - `POST /leads/import` validates, deduplicates, and stores JSON or CSV leads in memory.
 - `GET /outreach/due` returns leads that are due for outreach.
-- `POST /outreach/run-daily` personalizes a mock email, sends through a mock provider, and schedules the next touch.
+- `POST /outreach/run-daily` personalizes an email, sends through the configured provider, and schedules the next touch.
 - `POST /replies/classify` turns reply text into an intent.
 - `POST /replies/triage` applies deterministic status transitions from the classified reply.
 
@@ -76,6 +78,22 @@ The root route returns a compact endpoint overview:
 ```bash
 curl http://localhost:3000/
 ```
+
+## Email Delivery
+
+By default, email sends are mocked locally. Set `EMAIL_DRIVER=SMTP` to send real emails using the same SendGrid SMTP config shape as `crm-server`:
+
+```bash
+EMAIL_DRIVER=SMTP
+EMAIL_SMTP_HOST=smtp.sendgrid.net
+EMAIL_SMTP_PORT=587
+EMAIL_SMTP_USER=apikey
+EMAIL_SMTP_PASSWORD=replace-with-sendgrid-api-key
+EMAIL_FROM_ADDRESS=operations@example.com
+EMAIL_FROM_NAME=MedHub
+```
+
+`EMAIL_SMTP_PASSWORD` is the SendGrid API key. Do not commit real keys; set them in your deployment environment.
 
 ## Scheduled Outreach
 
