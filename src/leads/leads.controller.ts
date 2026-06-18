@@ -1,7 +1,17 @@
-import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  UploadedFile,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ImportLeadsDto } from './dto/import-leads.dto';
 import { LeadStatus } from './lead-status.enum';
-import { LeadsService } from './leads.service';
+import { LeadsService, UploadedCsvFile } from './leads.service';
 
 @Controller('leads')
 export class LeadsController {
@@ -13,7 +23,18 @@ export class LeadsController {
   }
 
   @Post('import')
-  importLeads(@Body() dto: ImportLeadsDto) {
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: {
+        fileSize: 2 * 1024 * 1024,
+      },
+    }),
+  )
+  importLeads(@Body() dto: ImportLeadsDto, @UploadedFile() file?: UploadedCsvFile) {
+    if (file) {
+      return this.leadsService.importLeadCsv(file);
+    }
+
     return this.leadsService.importLeads(dto);
   }
 
