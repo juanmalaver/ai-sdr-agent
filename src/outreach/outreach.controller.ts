@@ -1,5 +1,6 @@
-import { Controller, Get, Post, Query } from '@nestjs/common';
+import { Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { OutreachService } from './outreach.service';
+import { SchedulerSecretGuard } from './scheduler-secret.guard';
 
 @Controller('outreach')
 export class OutreachController {
@@ -11,6 +12,7 @@ export class OutreachController {
   }
 
   @Post('run-daily')
+  @UseGuards(SchedulerSecretGuard)
   runDailyOutreach(@Query('limit') limit?: string) {
     return this.outreachService.runDailyOutreach(this.parseLimit(limit));
   }
