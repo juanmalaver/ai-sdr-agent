@@ -14,6 +14,10 @@ export interface OutreachResult {
 export class OutreachService {
   private readonly maxTouches = 4;
   private readonly followUpDelayDays = 3;
+  private readonly outreachConcurrency = this.parsePositiveInteger(
+    process.env.OUTREACH_CONCURRENCY,
+    3,
+  );
   private readonly outreachEligibleStatuses = new Set<LeadStatus>([
     LeadStatus.New,
     LeadStatus.Active,
@@ -26,10 +30,10 @@ export class OutreachService {
     private readonly emailProviderService: EmailProviderService,
   ) {}
 
-  listDueLeads(limit?: number): Lead[] {
+  async listDueLeads(limit?: number): Promise<Lead[]> {
     const now = new Date();
-    const dueLeads = this.leadsService
-      .listLeads()
+    const leads = await this.leadsService.listLeads();
+    const dueLeads = leads
       .filter((lead) => this.isDueForOutreach(lead, now))
       .sort((a, b) => (a.nextFollowupAt ?? '').localeCompare(b.nextFollowupAt ?? ''));
 
@@ -38,32 +42,41 @@ export class OutreachService {
 
   async runDailyOutreach(limit?: number) {
     const now = new Date();
-    const results: OutreachResult[] = await Promise.all(
-      this.listDueLeads(limit).map(async (lead) => {
-        const draft = this.aiService.personalizeEmail(lead);
-        const email = await this.emailProviderService.sendEmail({
-          to: lead.email,
-          subject: draft.subject,
-          body: draft.body,
-        });
-        const updatedLead = this.leadsService.recordTouch(
-          lead.id,
-          now,
-          this.followUpDelayDays,
-          this.maxTouches,
-        );
+    const dueLeads = await this.listDueLeads(limit);
+    const results: OutreachResult[] = [];
 
-        return {
-          lead: updatedLead,
-          email,
-        };
-      }),
-    );
+    for (let index = 0; index < dueLeads.length; index += this.outreachConcurrency) {
+      const batch = dueLeads.slice(index, index + this.outreachConcurrency);
+      const batchResults = await Promise.all(
+        batch.map(async (lead) => {
+          const draft = await this.aiService.personalizeEmail(lead);
+          const email = await this.emailProviderService.sendEmail({
+            to: lead.email,
+            subject: draft.subject,
+            body: draft.body,
+          });
+          const updatedLead = await this.leadsService.recordTouch(
+            lead.id,
+            now,
+            this.followUpDelayDays,
+            this.maxTouches,
+          );
+
+          return {
+            lead: updatedLead,
+            email,
+          };
+        }),
+      );
+
+      results.push(...batchResults);
+    }
 
     return {
       sentCount: results.length,
       maxTouches: this.maxTouches,
       followUpDelayDays: this.followUpDelayDays,
+      outreachConcurrency: this.outreachConcurrency,
       results,
     };
   }
@@ -75,5 +88,11 @@ export class OutreachService {
       Boolean(lead.nextFollowupAt) &&
       new Date(lead.nextFollowupAt as string).getTime() <= now.getTime()
     );
+  }
+
+  private parsePositiveInteger(value: string | undefined, fallback: number): number {
+    const parsed = Number(value);
+
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
   }
 }

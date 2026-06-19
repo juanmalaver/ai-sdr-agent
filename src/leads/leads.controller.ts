@@ -18,7 +18,7 @@ export class LeadsController {
   constructor(private readonly leadsService: LeadsService) {}
 
   @Get()
-  listLeads() {
+  async listLeads() {
     return this.leadsService.listLeads();
   }
 
@@ -30,7 +30,7 @@ export class LeadsController {
       },
     }),
   )
-  importLeads(@Body() dto: ImportLeadsDto, @UploadedFile() file?: UploadedCsvFile) {
+  async importLeads(@Body() dto: ImportLeadsDto, @UploadedFile() file?: UploadedCsvFile) {
     if (file) {
       return this.leadsService.importLeadCsv(file);
     }
@@ -39,7 +39,7 @@ export class LeadsController {
   }
 
   @Patch(':id/status')
-  updateStatus(@Param('id') id: string, @Body('status') status: LeadStatus) {
+  async updateStatus(@Param('id') id: string, @Body('status') status: LeadStatus) {
     return this.leadsService.updateStatus(id, status);
   }
 }

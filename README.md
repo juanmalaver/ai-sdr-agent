@@ -8,19 +8,41 @@ email personalization and reply understanding.
 ```bash
 npm install
 cp .env.example .env
+docker compose up -d postgres
+npm run db:migrate
 npm run start:dev
 ```
 
 The API starts on `http://localhost:3000` by default.
 The app loads local values from `.env`; set production values in the deployment environment.
+Before running migrations locally, set `DATABASE_URL=postgres://ai_sdr_agent:ai_sdr_agent@127.0.0.1:5433/ai_sdr_agent` in `.env`.
 
 ## Current Flow
 
-- `POST /leads/import` validates, deduplicates, and stores JSON or CSV leads in memory.
+- `POST /leads/import` validates, deduplicates, and stores JSON or CSV leads in PostgreSQL.
 - `GET /outreach/due` returns leads that are due for outreach.
 - `POST /outreach/run-daily` personalizes an email, sends through the configured provider, and schedules the next touch.
 - `POST /replies/classify` turns reply text into an intent.
 - `POST /replies/triage` applies deterministic status transitions from the classified reply.
+
+## Lead Persistence
+
+Imported leads are persisted in PostgreSQL. Configure the database with:
+
+```bash
+DATABASE_URL=postgres://ai_sdr_agent:ai_sdr_agent@127.0.0.1:5433/ai_sdr_agent
+```
+
+Run migrations before starting the API:
+
+```bash
+npm run db:migrate
+```
+
+For production, use a managed PostgreSQL instance, set `DATABASE_URL` in the deployment
+environment, and run `npm run db:migrate` during the release/deploy step. Set
+`DATABASE_SSL=true` when your provider requires TLS. `DATABASE_AUTO_MIGRATE=true` is available
+for simple deployments, but explicit release migrations are easier to reason about.
 
 ## Import Leads
 
@@ -78,6 +100,48 @@ The root route returns a compact endpoint overview:
 ```bash
 curl http://localhost:3000/
 ```
+
+## AI Provider
+
+By default, AI calls use the local mock heuristics so the app can run without cloud credentials:
+
+```bash
+AI_PROVIDER=MOCK
+```
+
+Set `AI_PROVIDER=VERTEX` to use Claude through Google Vertex AI. Local Vertex auth uses Google application default credentials, not an Anthropic API key:
+
+```bash
+gcloud config set project keep-calm-database
+gcloud auth application-default login
+gcloud services enable aiplatform.googleapis.com
+```
+
+Then set:
+
+```bash
+AI_PROVIDER=VERTEX
+ANTHROPIC_VERTEX_PROJECT_ID=keep-calm-database
+CLOUD_ML_REGION=global
+CLAUDE_MODEL=claude-sonnet-4-6
+CLAUDE_MAX_OUTPUT_TOKENS=700
+OUTREACH_CONCURRENCY=3
+```
+
+Make sure the Claude model is enabled for the project in Vertex AI Model Garden.
+For Cloud Run, set the same env vars on the service and grant the runtime service account permission to call Vertex AI, commonly `roles/aiplatform.user`:
+
+```bash
+gcloud run services update ai-sdr-agent \
+  --region=us-east1 \
+  --update-env-vars="AI_PROVIDER=VERTEX,ANTHROPIC_VERTEX_PROJECT_ID=keep-calm-database,CLOUD_ML_REGION=global,CLAUDE_MODEL=claude-sonnet-4-6,OUTREACH_CONCURRENCY=3"
+
+gcloud projects add-iam-policy-binding keep-calm-database \
+  --member="serviceAccount:YOUR_CLOUD_RUN_SERVICE_ACCOUNT" \
+  --role="roles/aiplatform.user"
+```
+
+`OUTREACH_CONCURRENCY` limits how many due leads are personalized and sent at the same time during `POST /outreach/run-daily`, which helps avoid sudden Vertex AI and SendGrid spikes.
 
 ## Email Delivery
 

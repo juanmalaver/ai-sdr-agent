@@ -1,5 +1,6 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
-import nodemailer from 'nodemailer';
+import { createTransport, type Transporter } from 'nodemailer';
+import type SMTPTransport from 'nodemailer/lib/smtp-transport';
 import { Lead } from '../leads/lead.model';
 
 export interface OutboundEmail {
@@ -16,26 +17,33 @@ export interface SentEmail {
   sentAt: string;
 }
 
+interface SmtpEmailConfig {
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  fromAddress: string;
+  fromName?: string;
+  noTls: boolean;
+  secure: boolean;
+}
+
 @Injectable()
 export class EmailProviderService {
   private readonly sentEmails: SentEmail[] = [];
-  private readonly driver = (process.env.EMAIL_DRIVER ?? 'LOGGER').toUpperCase();
+  private smtpTransporter?: Transporter<SMTPTransport.SentMessageInfo>;
 
   async sendEmail(email: OutboundEmail): Promise<SentEmail> {
-    if (this.driver === 'SMTP') {
+    if (this.emailDriver() === 'SMTP') {
       return this.sendSmtpEmail(email);
     }
 
-    const sentEmail: SentEmail = {
+    return this.recordSentEmail({
       id: crypto.randomUUID(),
       provider: 'mock',
       to: email.to,
       subject: email.subject,
-      sentAt: new Date().toISOString(),
-    };
-
-    this.sentEmails.push(sentEmail);
-    return sentEmail;
+    });
   }
 
   async sendBookingLink(lead: Lead): Promise<SentEmail> {
@@ -55,75 +63,109 @@ export class EmailProviderService {
   }
 
   private async sendSmtpEmail(email: OutboundEmail): Promise<SentEmail> {
-    const host = process.env.EMAIL_SMTP_HOST ?? 'smtp.sendgrid.net';
-    const port = this.parsePort(process.env.EMAIL_SMTP_PORT, 587);
-    const user = process.env.EMAIL_SMTP_USER ?? 'apikey';
-    const password = this.requireEnv('EMAIL_SMTP_PASSWORD');
-    const fromAddress = this.requireEnv('EMAIL_FROM_ADDRESS');
-    const fromName = process.env.EMAIL_FROM_NAME;
-
-    const transporter = nodemailer.createTransport({
-      host,
-      port,
-      secure: port === 465,
-      auth: {
-        user,
-        pass: password,
-      },
-    });
-    const sentAt = new Date().toISOString();
-    const info = await transporter.sendMail({
-      from: this.formatSender(fromAddress, fromName),
+    const config = this.smtpConfig();
+    const info = await this.getSmtpTransporter(config).sendMail({
+      from: this.formatFrom(config),
       to: email.to,
       subject: email.subject,
       text: email.body,
       html: this.toHtml(email.body),
     });
-    const sentEmail: SentEmail = {
-      id: typeof info.messageId === 'string' ? info.messageId : crypto.randomUUID(),
+
+    return this.recordSentEmail({
+      id: info.messageId || crypto.randomUUID(),
       provider: 'sendgrid',
       to: email.to,
       subject: email.subject,
-      sentAt,
+    });
+  }
+
+  private getSmtpTransporter(config: SmtpEmailConfig): Transporter<SMTPTransport.SentMessageInfo> {
+    if (!this.smtpTransporter) {
+      this.smtpTransporter = createTransport({
+        host: config.host,
+        port: config.port,
+        secure: config.secure,
+        ignoreTLS: config.noTls,
+        requireTLS: !config.noTls,
+        auth: {
+          user: config.user,
+          pass: config.password,
+        },
+      });
+    }
+
+    return this.smtpTransporter;
+  }
+
+  private recordSentEmail(input: Omit<SentEmail, 'sentAt'>): SentEmail {
+    const sentEmail: SentEmail = {
+      ...input,
+      sentAt: new Date().toISOString(),
     };
 
     this.sentEmails.push(sentEmail);
     return sentEmail;
   }
 
-  private requireEnv(name: string): string {
-    const value = process.env[name];
+  private emailDriver(): 'LOGGER' | 'SMTP' {
+    const driver = (process.env.EMAIL_DRIVER || 'LOGGER').trim().toUpperCase();
 
-    if (!value) {
-      throw new InternalServerErrorException(`Email is not configured: set ${name}.`);
+    if (driver === 'LOGGER' || driver === 'SMTP') {
+      return driver;
     }
 
-    return value;
+    throw new InternalServerErrorException(`Unsupported EMAIL_DRIVER: ${driver}`);
   }
 
-  private parsePort(value: string | undefined, fallback: number): number {
-    const parsed = Number(value);
+  private smtpConfig(): SmtpEmailConfig {
+    const host = process.env.EMAIL_SMTP_HOST || 'smtp.sendgrid.net';
+    const port = Number(process.env.EMAIL_SMTP_PORT || 587);
+    const user = process.env.EMAIL_SMTP_USER || 'apikey';
+    const password = process.env.EMAIL_SMTP_PASSWORD;
+    const fromAddress = process.env.EMAIL_FROM_ADDRESS;
+    const fromName = process.env.EMAIL_FROM_NAME;
+    const noTls = this.isTruthy(process.env.EMAIL_SMTP_NO_TLS);
 
-    return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+    if (!Number.isInteger(port) || port <= 0) {
+      throw new InternalServerErrorException('Email is not configured: EMAIL_SMTP_PORT is invalid.');
+    }
+
+    if (!password) {
+      throw new InternalServerErrorException('Email is not configured: set EMAIL_SMTP_PASSWORD.');
+    }
+
+    if (!fromAddress) {
+      throw new InternalServerErrorException('Email is not configured: set EMAIL_FROM_ADDRESS.');
+    }
+
+    return {
+      host,
+      port,
+      user,
+      password,
+      fromAddress,
+      fromName,
+      noTls,
+      secure: port === 465 && !noTls,
+    };
   }
 
-  private formatSender(address: string, name?: string): string {
-    return name ? `${name} <${address}>` : address;
+  private formatFrom(config: SmtpEmailConfig): string {
+    return config.fromName ? `${config.fromName} <${config.fromAddress}>` : config.fromAddress;
   }
 
-  private toHtml(body: string): string {
-    return body
-      .split('\n')
-      .map((line) => this.escapeHtml(line))
-      .join('<br>');
+  private isTruthy(value: string | undefined): boolean {
+    return ['1', 'true', 'yes', 'y'].includes(value?.trim().toLowerCase() ?? '');
   }
 
-  private escapeHtml(value: string): string {
-    return value
+  private toHtml(text: string): string {
+    return text
       .replaceAll('&', '&amp;')
       .replaceAll('<', '&lt;')
       .replaceAll('>', '&gt;')
       .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#039;');
+      .replaceAll("'", '&#39;')
+      .replaceAll('\n', '<br>');
   }
 }

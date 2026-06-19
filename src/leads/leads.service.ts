@@ -36,11 +36,11 @@ export class LeadsService {
 
   constructor(private readonly leadsRepository: LeadsRepository) {}
 
-  listLeads(): Lead[] {
+  listLeads(): Promise<Lead[]> {
     return this.leadsRepository.list();
   }
 
-  importLeads(dto: ImportLeadsDto): ImportLeadsResult {
+  importLeads(dto: ImportLeadsDto): Promise<ImportLeadsResult> {
     if (!Array.isArray(dto?.leads)) {
       throw new BadRequestException(
         'Body must include a leads array, or upload a CSV file using multipart field "file".',
@@ -50,7 +50,7 @@ export class LeadsService {
     return this.importLeadInputs(dto.leads, 'json', 0);
   }
 
-  importLeadCsv(file: UploadedCsvFile): ImportLeadsResult {
+  importLeadCsv(file: UploadedCsvFile): Promise<ImportLeadsResult> {
     this.validateCsvFile(file);
 
     const rows = this.parseCsvRows(file);
@@ -74,17 +74,17 @@ export class LeadsService {
     );
   }
 
-  private importLeadInputs(
+  private async importLeadInputs(
     leads: ImportLeadInput[],
     source: ImportSource,
     firstRowNumber: number,
-  ): ImportLeadsResult {
+  ): Promise<ImportLeadsResult> {
     const imported: Lead[] = [];
     const duplicates: ImportLeadInput[] = [];
     const invalid: InvalidLead[] = [];
     const seenEmails = new Set<string>();
 
-    leads.forEach((leadInput, index) => {
+    for (const [index, leadInput] of leads.entries()) {
       const email = this.normalizeEmail(leadInput.email);
 
       if (!email || !this.isValidEmail(email)) {
@@ -93,17 +93,23 @@ export class LeadsService {
           reason: 'Missing or invalid email.',
           lead: leadInput,
         });
-        return;
+        continue;
       }
 
-      if (seenEmails.has(email) || this.leadsRepository.findByEmail(email)) {
+      if (seenEmails.has(email)) {
         duplicates.push(leadInput);
-        return;
+        continue;
       }
 
       seenEmails.add(email);
-      imported.push(this.leadsRepository.create(this.toLead(leadInput, email)));
-    });
+      const created = await this.leadsRepository.create(this.toLead(leadInput, email));
+
+      if (created) {
+        imported.push(created);
+      } else {
+        duplicates.push(leadInput);
+      }
+    }
 
     return {
       source,
@@ -116,8 +122,8 @@ export class LeadsService {
     };
   }
 
-  findLead(id: string): Lead {
-    const lead = this.leadsRepository.findById(id);
+  async findLead(id: string): Promise<Lead> {
+    const lead = await this.leadsRepository.findById(id);
 
     if (!lead) {
       throw new NotFoundException(`Lead ${id} was not found.`);
@@ -126,16 +132,16 @@ export class LeadsService {
     return lead;
   }
 
-  findLeadByEmail(email: string): Lead | undefined {
+  findLeadByEmail(email: string): Promise<Lead | undefined> {
     return this.leadsRepository.findByEmail(this.normalizeEmail(email));
   }
 
-  updateStatus(id: string, status: LeadStatus): Lead {
+  async updateStatus(id: string, status: LeadStatus): Promise<Lead> {
     if (!Object.values(LeadStatus).includes(status)) {
       throw new BadRequestException(`Unsupported status: ${status}`);
     }
 
-    const updated = this.leadsRepository.update(id, { status });
+    const updated = await this.leadsRepository.update(id, { status });
 
     if (!updated) {
       throw new NotFoundException(`Lead ${id} was not found.`);
@@ -144,13 +150,18 @@ export class LeadsService {
     return updated;
   }
 
-  recordTouch(id: string, touchedAt: Date, followUpDelayDays: number, maxTouches: number): Lead {
-    const lead = this.findLead(id);
+  async recordTouch(
+    id: string,
+    touchedAt: Date,
+    followUpDelayDays: number,
+    maxTouches: number,
+  ): Promise<Lead> {
+    const lead = await this.findLead(id);
     const touches = lead.touches + 1;
     const nextFollowupAt =
       touches < maxTouches ? this.addDays(touchedAt, followUpDelayDays).toISOString() : undefined;
 
-    const updated = this.leadsRepository.update(id, {
+    const updated = await this.leadsRepository.update(id, {
       status: LeadStatus.Contacted,
       touches,
       lastContactedAt: touchedAt.toISOString(),
